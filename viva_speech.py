@@ -308,9 +308,14 @@ async def main():
         print(f"Error: Database '{DB_NAME}' not found. Please run setup_db.py first.")
         return
 
-    # Load faster-whisper model (small model size)
-    print("Loading faster-whisper model (small size, CPU, int8)...")
-    whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
+    # Download the faster-whisper small model with progress bar indicator
+    print("Checking and downloading faster-whisper small model from Hugging Face...")
+    from huggingface_hub import snapshot_download
+    model_dir = snapshot_download(repo_id="Systran/faster-whisper-small")
+    
+    # Load model from local cache directory
+    print("Loading faster-whisper model (small size, CPU, int8) into memory...")
+    whisper_model = WhisperModel(model_dir, device="cpu", compute_type="int8")
     print("Model loaded successfully.")
 
     # Connect to database
