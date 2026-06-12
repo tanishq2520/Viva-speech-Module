@@ -50,11 +50,13 @@ This module automates the speech-based testing loop of a viva session.
 ### What It Does:
 * Reads a question from the SQLite database.
 * Converts the text of that question into high-quality spoken audio and plays it aloud.
-* Waits for 1 second to avoid capturing the system's own speakers.
+* Waits for 2 seconds to avoid capturing the system's own speakers.
+* Captures 0.5s of ambient noise as a noise profile.
 * Captures real-time microphone input.
-* Checks each 20ms chunk for speech vs. background noise.
-* Stops recording automatically if the student is silent for 5 seconds OR if they reach a hard cap of 30 seconds.
-* Transcribes the audio into plain text.
+* Checks each chunk for speech vs. background noise (VAD mode 1).
+* Stops recording automatically if the student is silent for 8 seconds OR if they reach a hard cap of 30 seconds.
+* Cleans the recording using the ambient noise profile.
+* Transcribes the audio into plain text (Whisper small model, English-only).
 * Saves the text back to the database row for that question.
 
 ### What It Does NOT Do:
@@ -75,19 +77,31 @@ This module automates the speech-based testing loop of a viva session.
   +                           |                           |
                               v
   +-------------------------------------------------------+
-  |              1-Second Guard Pause Buffer              |
+  |              2-Second Guard Pause Buffer              |
   |     - Ensures mic doesn't record system voice         |
   +                           |                           |
                               v
   +-------------------------------------------------------+
   |            Microphone Capture (pyaudio)               |
-  |     - Opens mic stream (16kHz, mono, 320 chunk)       |
+  |     - Opens mic stream (16kHz, mono, 512 chunk)       |
+  |     - Captures 0.5s ambient noise first               |
   +                           |                           |
                               v
   +-------------------------------------------------------+
   |          Voice Activity Detection (webrtcvad)         |
-  |     - Monitors active speech vs. silence              |
-  |     - Silence > 5s OR total time > 30s -> Stop        |
+  |     - Monitors active speech vs. silence (mode 1)     |
+  |     - Silence > 8s OR total time > 30s -> Stop        |
+  +                           |                           |
+                              v
+  +-------------------------------------------------------+
+  |               Noise Reduction (noisereduce)           |
+  |     - Cleans answer.wav using noise profile           |
+  +                           |                           |
+                              v
+  +-------------------------------------------------------+
+  |             Transcription (faster-whisper)            |
+  |     - Converts recorded answer.wav to plain text      |
+  |     - Uses 'small' model, en-only, logprob filter     |
   +                           |                           |
                               v
   +-------------------------------------------------------+
@@ -114,6 +128,9 @@ We selected these packages to maintain a high-quality user experience without ne
 | **`pyaudio`** | Capture microphone audio stream. | Industry-standard Python wrapper around PortAudio, providing reliable low-level control of raw audio input. |
 | **`webrtcvad`** | Voice Activity Detection (VAD). | Built by Google for WebRTC. Extremely fast, lightweight, runs locally, and handles noise filtering better than simple amplitude thresholding. (Installed via `webrtcvad-wheels` for precompiled Windows binaries). |
 | **`faster-whisper`** | Speech-to-Text (STT) transcription. | Re-implementation of OpenAI's Whisper using CTranslate2. Up to 4x faster than original Whisper with lower memory footprint; runs locally on CPU using `int8` precision. |
+| **`noisereduce`** | Background noise reduction. | Cleans ambient/background noise using a spectral gating algorithm. Runs locally and improves transcription accuracy. |
+| **`soundfile`** | Wave file reading/writing. | Flexible audio loader that handles metadata and raw data conversion seamlessly for python numpy structures. |
+| **`librosa`** | Audio processing (resampling). | Standard python library for music and audio analysis. Provides robust resampling algorithms to match sample rates. |
 
 ---
 
@@ -292,20 +309,25 @@ If you are developing the scoring, grading, or validation module, follow these r
      ```
 4. **What NOT to touch**:
    * **Do not edit `play_mp3_windows()`**: It uses low-level Windows DLL functions. Changing directories or handles will crash playback.
-   * **Do not modify VAD timing buffers**: `CHUNK_SIZE = 320` is specifically chosen for a sample rate of `16000` to yield exactly `20ms` frames. Changing this will cause `webrtcvad` to throw validation errors.
+   * **Do not modify VAD timing buffers**: `CHUNK_SIZE = 512` is requested for PyAudio recording. However, since `webrtcvad` only accepts 10ms, 20ms, or 30ms frames, our script implements an internal `vad_buffer` that extracts exactly `320` samples (20ms frames) for VAD. Altering these rates will cause VAD initialization or classification failures.
 
 ---
 
 ## ⏱️ Timer Logic
 
-* **1-Second Guard Pause**:
+* **2-Second Guard Pause**:
   * *Why*: When the computer finishes speaking the question, the microphone needs a buffer pause. If recording starts immediately, it will catch the echo of the system speaker reading the last syllable.
-  * *Where*: Regulated in `viva_speech.py` using `await asyncio.sleep(1.0)`.
-* **5-Second Silence Auto-Submit**:
-  * *How*: We initialize `last_speech_time` to the recording start time. The microphone reads 20ms frames. If `webrtcvad` marks a frame as speech, we update `last_speech_time = time.time()`. If `time.time() - last_speech_time >= 5.0`, the loop breaks.
-  * *Result*: If the student stops speaking for 5 seconds (or doesn't speak at all at the start), the recording immediately ends and submits.
+  * *Where*: Regulated in `viva_speech.py` using `await asyncio.sleep(2.0)`.
+* **8-Second Silence Auto-Submit**:
+  * *How*: We initialize `last_speech_time` to the recording start time. The microphone reads 512-sample chunks. If `webrtcvad` marks a sub-frame as speech, we update `last_speech_time = time.time()`. If `time.time() - last_speech_time >= 8.0`, the loop breaks.
+  * *Result*: If the student stops speaking for 8 seconds (or doesn't speak at all at the start), the recording ends and submits.
 * **30-Second Hard Cap**:
   * *How*: Tracks `elapsed_time = time.time() - start_time`. If `elapsed_time >= 30.0`, the loop breaks immediately, saving whatever speech was recorded up to that second.
+* **2-Second Minimum Active Recording**:
+  * *Why*: Prevents accidental immediate submission from a brief noise spike right after recording starts.
+  * *How*: Even if silence is detected (elapsed since last speech >= 8.0s), the loop will continue recording unless the active speaking time (time since the first speech frame was detected) is at least `2.0` seconds. Note: If the student never starts speaking, the absolute silence timeout (8.0s from session start) takes priority to prevent getting stuck.
+* **is_recording_active (Skip Leading Silence)**:
+  * *Why*: Silence at the very beginning of the recording (before the student starts talking) is skipped, so the recorded WAV file only contains the student's actual answer. We only start appending chunks to `frames` after the first speech frame is detected.
 
 ---
 
