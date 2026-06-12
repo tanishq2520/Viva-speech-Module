@@ -1,0 +1,15 @@
+# SQLite Database
+viva.db
+
+# Temporary audio files
+temp_question.mp3
+answer.wav
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Local environments
+.venv/
+venv/
+ENV/
