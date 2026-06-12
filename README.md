@@ -331,30 +331,59 @@ If you are developing the scoring, grading, or validation module, follow these r
 
 ## 🔧 Reset and Utility Commands
 
-These SQL queries are available inside `manage_db.py` but can also be executed in any SQLite viewer:
+Here are the terminal commands and SQL queries you can use to manage the database.
 
-### View All Questions and Answers
+### 🖥️ Terminal Commands
+
+#### 1. View all questions and answers in the console:
+Use the helper script to view the database table formatted directly in your terminal:
+```bash
+python manage_db.py view
+```
+
+#### 2. Reset all student answers back to NULL:
+To clear all responses and start a fresh testing session, use this helper command:
+```bash
+python manage_db.py reset
+```
+Alternatively, you can run it as a quick python one-liner without using the helper script:
+```bash
+python -c "import sqlite3; conn=sqlite3.connect('viva.db'); conn.cursor().execute('UPDATE viva_questions SET viva_answers = NULL'); conn.commit(); conn.close(); print('All answers reset to NULL successfully!')"
+```
+
+#### 3. Add a new viva question:
+Use the helper script to easily insert a new question into the table (make sure to wrap the question in double quotes):
+```bash
+python manage_db.py add "What is polymorphism in Object-Oriented Programming?"
+```
+
+---
+
+### 🗄️ SQL Commands (For Database Viewers)
+These raw SQL queries are executed by the scripts but can also be run in any external SQLite editor (like DB Browser for SQLite) connected to `viva.db`:
+
+#### View All Questions and Answers
 ```sql
 SELECT id, question_text, viva_answers FROM viva_questions;
 ```
 
-### Reset All Answers
+#### Reset All Answers to NULL
 ```sql
 UPDATE viva_questions SET viva_answers = NULL;
 ```
 
-### Add a Question
+#### Add a Question
 ```sql
 INSERT INTO viva_questions (question_text) 
 VALUES ('What is the purpose of an index in a database?');
 ```
 
-### Delete a Specific Question
+#### Delete a Specific Question
 ```sql
 DELETE FROM viva_questions WHERE id = 5;
 ```
 
-### Wipe and Recreate Table
+#### Wipe and Recreate Table
 ```sql
 DROP TABLE IF EXISTS viva_questions;
 CREATE TABLE viva_questions (
