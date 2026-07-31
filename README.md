@@ -39,7 +39,8 @@ If you want to spin up and test the system immediately, follow these three comma
 8. [⏱️ Timer Logic](#️-timer-logic)
 9. [❌ Common Errors and Fixes](#-common-errors-and-fixes)
 10. [🔧 Reset and Utility Commands](#-reset-and-utility-commands)
-11. [✍️ Contact / Handover Notes](#️-contact--handover-notes)
+11. [🐧 Running on Ubuntu/Linux (No Sudo Access)](#-running-on-ubuntulinux-no-sudo-access)
+12. [✍️ Contact / Handover Notes](#️-contact--handover-notes)
 
 ---
 
@@ -414,6 +415,139 @@ CREATE TABLE viva_questions (
     viva_answers TEXT DEFAULT NULL
 );
 ```
+
+## 🐧 Running on Ubuntu/Linux (No Sudo Access)
+
+If you are deploying or running this pipeline on an Ubuntu/Linux machine where you **do not have root/sudo privileges**, you cannot use system package managers like `apt-get`. Follow this step-by-step setup to install Python, system audio drivers, and build dependencies entirely within your user space.
+
+---
+
+### 1. Install Miniconda (User Space Setup)
+Since `apt` and system-wide `pip` require sudo permissions on many Linux machines, install Miniconda locally in your `$HOME` directory:
+
+```bash
+# 1. Download Miniconda installer
+curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+# 2. Perform silent installation into $HOME/miniconda3
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+
+# 3. Initialize conda for shell and reload configuration
+$HOME/miniconda3/bin/conda init bash
+source ~/.bashrc
+```
+
+---
+
+### 2. Accept Conda Terms of Service
+In newer versions of Conda, accepting the Terms of Service for default channels is required before environment creation:
+
+```bash
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+---
+
+### 3. Create & Activate Conda Environment
+Create an isolated Python 3.11 environment named `viva`:
+
+```bash
+conda create -n viva python=3.11 -y
+conda activate viva
+```
+
+---
+
+### 4. Install System Dependencies via Conda (No Sudo)
+PyAudio requires the `portaudio` development headers and a C/C++ compiler (`gcc`/`g++`) to build on Linux. Additionally, `ffmpeg` is required for MP3 playback. Install all of these without `sudo` via `conda-forge`:
+
+```bash
+conda install -c conda-forge portaudio gcc gxx ffmpeg alsa-plugins -y
+```
+
+> **Why these packages?**
+> * **`portaudio` & `gcc`/`g++`**: Required to compile the `pyaudio` C extension when installing via `pip`.
+> * **`ffmpeg` (`ffplay`)**: Required for MP3 question audio playback on Linux.
+> * **`alsa-plugins`**: Directs ALSA audio streams to PulseAudio/system speakers.
+
+---
+
+### 5. Install Python Requirements
+With system dependencies present in your Conda environment, install the project requirements:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+### 6. Audio Playback Fix for Linux
+The default `play_mp3_windows()` function uses Windows-specific `ctypes.windll` APIs (`mciSendStringW`). On Linux systems, audio playback uses an `ffplay` (ffmpeg) subprocess call instead:
+
+```python
+import subprocess
+
+def play_mp3_linux(file_path: str):
+    """
+    Play MP3 audio on Linux using ffplay (part of ffmpeg package).
+    Replaces Windows-only ctypes.windll MCI playback.
+    """
+    try:
+        subprocess.run(
+            ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", file_path],
+            check=True
+        )
+    except Exception as e:
+        print(f"Error during Linux audio playback: {e}")
+```
+
+---
+
+### 7. ALSA / PulseAudio Configuration Note
+If `pyaudio.PyAudio()` throws `[Errno -9999] Unanticipated host error` or sample rate mismatch errors when opening the microphone, create a user-level ALSA config file (`~/.asoundrc`) to route audio through PulseAudio:
+
+Create or edit `~/.asoundrc`:
+```text
+pcm.!default {
+    type pulse
+}
+ctl.!default {
+    type pulse
+}
+```
+
+Quick terminal command to generate `~/.asoundrc`:
+```bash
+cat << 'EOF' > ~/.asoundrc
+pcm.!default {
+    type pulse
+}
+ctl.!default {
+    type pulse
+}
+EOF
+```
+
+---
+
+### 8. VAD Sensitivity Tuning (Background Noise Fix)
+If background noise in your environment is constantly detected as active speech—causing the recording to hit the 30-second hard cap without detecting silence—increase the WebRTC VAD aggressiveness mode in `viva_speech.py`:
+
+```python
+# Change VAD mode from 1 (loose) to 3 (very aggressive/strict silence detection)
+vad.set_mode(3)
+```
+
+---
+
+### 9. Common Linux Errors and Fixes
+
+| Error / Issue | Cause | Fix / Solution |
+| :--- | :--- | :--- |
+| **`pyaudio` build failure (`portaudio.h` or `gcc` missing)** | C compiler or `portaudio` libraries missing from user path during `pip install`. | Run `conda install -c conda-forge portaudio gcc gxx -y` before running `pip install -r requirements.txt`. |
+| **ALSA warnings on start (`ALSA lib pcm.c:... Unknown PCM`)** | Harmless default sound card queries by ALSA/PyAudio. | Safe to ignore if audio records successfully. If PyAudio crashes with `[Errno -9999]`, create `~/.asoundrc` as detailed above. |
+| **`pip install` Broken Pipe / Socket Timeout** | Temporary network interruption during large wheel downloads (e.g., PyTorch / Whisper). | Re-run `pip install -r requirements.txt` or add `--no-cache-dir` flag: `pip install --no-cache-dir -r requirements.txt`. |
 
 ---
 
