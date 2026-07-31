@@ -13,3 +13,12 @@ __pycache__/
 .venv/
 venv/
 ENV/
+
+
+Miniconda3-latest-Linux-x86_64.sh
+venv/
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+viva.db

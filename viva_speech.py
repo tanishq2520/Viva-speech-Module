@@ -16,25 +16,10 @@ TEMP_TTS_FILE = "temp_question.mp3"
 TEMP_RECORD_FILE = "answer.wav"
 
 def play_mp3_windows(file_path):
-    """Play an MP3 file using the native Windows MCI interface."""
+    """Play an MP3 file using mpg123 (Linux)."""
+    import subprocess
     abs_path = os.path.abspath(file_path)
-    winmm = ctypes.windll.winmm
-    
-    # Close any open instance just in case
-    winmm.mciSendStringW("close temp_audio", None, 0, None)
-    
-    # Open the file
-    open_cmd = f'open "{abs_path}" type mpegvideo alias temp_audio'
-    res = winmm.mciSendStringW(open_cmd, None, 0, None)
-    if res != 0:
-        raise RuntimeError(f"Failed to open audio file via MCI (Error code: {res})")
-        
-    # Play the file and wait for completion
-    play_cmd = 'play temp_audio wait'
-    winmm.mciSendStringW(play_cmd, None, 0, None)
-    
-    # Close the file
-    winmm.mciSendStringW("close temp_audio", None, 0, None)
+    subprocess.run(["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", abs_path], check=True)
 
 async def speak_question(text):
     """Generate TTS audio and play it aloud."""
@@ -65,7 +50,7 @@ def record_answer():
     
     p = pyaudio.PyAudio()
     vad = webrtcvad.Vad()
-    vad.set_mode(1)  # VAD aggressiveness: 1 (less aggressive, handles soft speech/accents)
+    vad.set_mode(3)  # VAD aggressiveness: 1 (less aggressive, handles soft speech/accents)
     
     stream = None
     
